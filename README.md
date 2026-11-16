@@ -4,14 +4,14 @@ Repository package: `FVW`
 Gradle root project: `FVW`  
 Application label: `EVeditor`  
 Application ID: `com.evc.app`  
-Version: `0.2.170` (`370`)  
+Version: `0.2.172` (`372`)  
 Target ABI: `armeabi-v7a` (ARM 32-bit)
 
 > GitHub Actions workflow: `.github/workflows/android.yml` — runs on pushes to all branches and supports manual dispatch. See `FVW_Commit_Guide_FA.txt` for MGit/GitHub setup and troubleshooting.
 
 ---
 
-# FVW – 0.2.170 (baseline)
+# FVW – 0.2.172
 
 ## موتور ترکیب چندویدیویی (مرحلهٔ اول)
 - فایل‌های افزوده‌شده به ردیف مستقل VIDEO اکنون در خروجی نوار ترک‌ها روی ویدیوی اصلی ترکیب می‌شوند. هر قطعه از زمان مبدأ انتخاب‌شده بریده می‌شود و در زمان شروع خودش نمایش داده می‌شود.

@@ -52,6 +52,9 @@ import android.text.SpannableString
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.text.TextWatcher
+import android.text.StaticLayout
+import android.text.Layout
+import android.text.TextPaint
 import android.text.Editable
 import android.widget.Toast
 import android.widget.VideoView
@@ -206,9 +209,98 @@ class MainActivity : Activity() {
     // Applies to original-quality stream-copy exports (main export, timeline, storyboard segments).
     private var outputContainerMatroska = false
 
+    /**
+     * Project-wide control rule: every button uses the 52dp height of "لغو انتخاب".
+     * The two intentionally tall toolbar actions keep their original 124dp height.
+     * Labels are wrapped and measured to use the largest size that fits without clipping.
+     * A root layout listener also catches controls added later inside editor windows.
+     */
+    private fun installProjectButtonAndLabelRules() {
+        val root = findViewById<ViewGroup>(R.id.mainRootLayout) ?: return
+        root.viewTreeObserver.addOnGlobalLayoutListener {
+            if (root.isAttachedToWindow) standardizeControlTree(root)
+        }
+    }
+
+    private fun standardizeControlTree(view: View) {
+        val standardHeight = (52f * resources.displayMetrics.density + 0.5f).toInt()
+        if (view is CheckBox) {
+            fitProjectLabel(view, isCheckable = true)
+        } else if (view is Button) {
+            if (view.id != R.id.openButton && view.id != R.id.outputChangesButton) {
+                val lp = view.layoutParams
+                if (lp != null && lp.height != standardHeight) {
+                    lp.height = standardHeight
+                    view.layoutParams = lp
+                }
+            }
+            fitProjectLabel(view, isCheckable = false)
+        }
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) standardizeControlTree(view.getChildAt(index))
+        }
+    }
+
+    private fun standardizeDialogButtons(dialog: AlertDialog) {
+        val standardHeight = (52f * resources.displayMetrics.density + 0.5f).toInt()
+        listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL).forEach { which ->
+            dialog.getButton(which)?.let { button ->
+                button.post {
+                    val lp = button.layoutParams
+                    if (lp != null) {
+                        lp.height = standardHeight
+                        button.layoutParams = lp
+                    }
+                    fitProjectLabel(button, isCheckable = false)
+                }
+            }
+        }
+    }
+
+    private fun fitProjectLabel(view: TextView, isCheckable: Boolean) {
+        val label = view.text ?: return
+        if (label.isEmpty() || view.width <= 0 || view.height <= 0) return
+
+        // Keep labels centered, permit deliberate multi-line wrapping, and never ellipsize.
+        if (view.isSingleLine) view.setSingleLine(false)
+        if (view.maxLines != 100) view.maxLines = 100
+        if (view.ellipsize != null) view.ellipsize = null
+        if (view.gravity != Gravity.CENTER) view.gravity = Gravity.CENTER
+        if (view.includeFontPadding) view.includeFontPadding = false
+
+        val availableWidth = (view.width - view.compoundPaddingLeft - view.compoundPaddingRight)
+            .coerceAtLeast((24f * resources.displayMetrics.density).toInt())
+        val availableHeight = (view.height - view.compoundPaddingTop - view.compoundPaddingBottom)
+            .coerceAtLeast((18f * resources.displayMetrics.density).toInt())
+        val basePaint = TextPaint(view.paint)
+        val density = resources.displayMetrics.scaledDensity
+        val minSp = if (isCheckable) 6.5f else 6.5f
+        val maxSp = 22f
+        var chosenSp = minSp
+        var size = maxSp
+        while (size >= minSp) {
+            basePaint.textSize = size * density
+            val layout = StaticLayout.Builder.obtain(label, 0, label.length, basePaint, availableWidth)
+                .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                .setIncludePad(false)
+                .setMaxLines(100)
+                .build()
+            if (layout.lineCount <= 100 && layout.height <= availableHeight) {
+                chosenSp = size
+                break
+            }
+            size -= 0.5f
+        }
+        val chosenPx = chosenSp * density
+        if (kotlin.math.abs(view.textSize - chosenPx) > 0.25f) {
+            view.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, chosenSp)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        installProjectButtonAndLabelRules()
         // Collapsible editor windows must always start closed. Do not let a restored
         // view state or a video-import/layout refresh expose a panel without a tap.
         intArrayOf(
@@ -755,6 +847,7 @@ class MainActivity : Activity() {
             .setNeutralButton("انتخاب دوباره", null)
             .setNegativeButton("بستن", null).create()
         dialog.setOnShowListener {
+            standardizeDialogButtons(dialog)
             dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.78f).toInt())
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 players.forEach { it.seekTo(0); it.start() }
@@ -844,6 +937,9 @@ class MainActivity : Activity() {
         closeButton.setOnClickListener { popup.dismiss() }
         val root = findViewById<View>(R.id.mainRootLayout)
         popup.showAtLocation(root, Gravity.TOP or Gravity.END, (8 * density).toInt(), (72 * density).toInt())
+        scroll.viewTreeObserver.addOnGlobalLayoutListener {
+            if (scroll.isAttachedToWindow) standardizeControlTree(scroll)
+        }
         var dragX = 0f
         var dragY = 0f
         var startX = 0
@@ -2084,14 +2180,16 @@ class MainActivity : Activity() {
             return
         }
         val labels = actions.map { it.first }.toTypedArray()
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("Delete • حذف عمومی")
             .setItems(labels) { dialog, which ->
                 actions[which].second.invoke()
                 dialog.dismiss()
             }
             .setNegativeButton("انصراف", null)
-            .show()
+            .create()
+        dialog.setOnShowListener { standardizeDialogButtons(dialog) }
+        dialog.show()
     }
 
     private fun deleteSelectedTrackClip() {
