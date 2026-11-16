@@ -115,6 +115,10 @@ class MainActivity : Activity() {
     private val deletedTimelineRanges = mutableListOf<Pair<Long, Long>>()
     private var selectedTimelineRange: Pair<Long, Long>? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var suppressStoryboardAutoApply = false
+    private val storyboardAutoApplyRunnable = Runnable {
+        if (!suppressStoryboardAutoApply && selectedUri != null) applyStoryboardTimeRange()
+    }
     private val worker = Executors.newSingleThreadExecutor()
     // Keep timeline sampling independent so 120 storyboard frames cannot block the timeline strip.
     private val timelineThumbnailWorker = Executors.newSingleThreadExecutor()
@@ -274,20 +278,28 @@ class MainActivity : Activity() {
             .coerceAtLeast((18f * resources.displayMetrics.density).toInt())
         val basePaint = TextPaint(view.paint)
         val density = resources.displayMetrics.scaledDensity
-        val minSp = if (isCheckable) 6.5f else 6.5f
+        val minSp = 5.5f
         val maxSp = 22f
+        val words = label.toString().trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
         var chosenSp = minSp
         var size = maxSp
         while (size >= minSp) {
             basePaint.textSize = size * density
-            val layout = StaticLayout.Builder.obtain(label, 0, label.length, basePaint, availableWidth)
-                .setAlignment(Layout.Alignment.ALIGN_CENTER)
-                .setIncludePad(false)
-                .setMaxLines(100)
-                .build()
-            if (layout.lineCount <= 100 && layout.height <= availableHeight) {
-                chosenSp = size
-                break
+            // Never split a word across lines: reduce the font until even the longest
+            // complete word fits the available width, then wrap only at whitespace.
+            val everyWordFits = words.all { basePaint.measureText(it) <= availableWidth }
+            if (everyWordFits) {
+                val layout = StaticLayout.Builder.obtain(label, 0, label.length, basePaint, availableWidth)
+                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                    .setIncludePad(false)
+                    .setMaxLines(100)
+                    .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+                    .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+                    .build()
+                if (layout.lineCount <= 100 && layout.height <= availableHeight) {
+                    chosenSp = size
+                    break
+                }
             }
             size -= 0.5f
         }
@@ -301,6 +313,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         installProjectButtonAndLabelRules()
+        installStoryboardAutoApply()
         // Collapsible editor windows must always start closed. Do not let a restored
         // view state or a video-import/layout refresh expose a panel without a tap.
         intArrayOf(
@@ -710,7 +723,6 @@ class MainActivity : Activity() {
             timeModeButton.text = if (show) "بستن نوار زمان" else "نمایش نوار زمان"
             if (show) timelinePanel.post { timelinePanel.requestLayout() }
         }
-        findViewById<Button>(R.id.applyStoryboardTimeRangeButton).setOnClickListener { applyStoryboardTimeRange() }
         findViewById<Button>(R.id.pickStoryboardStartButton).setOnClickListener { setStoryboardTimeFromPlayback(true) }
         findViewById<Button>(R.id.pickStoryboardEndButton).setOnClickListener { setStoryboardTimeFromPlayback(false) }
 
@@ -3259,6 +3271,22 @@ class MainActivity : Activity() {
         catch (_: Exception) { Toast.makeText(this, "انتخاب‌گر فایل در دسترس نیست", Toast.LENGTH_LONG).show() }
     }
 
+    /** Automatically rebuilds the storyboard two seconds after the user finishes editing a time field. */
+    private fun installStoryboardAutoApply() {
+        val watcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                if (suppressStoryboardAutoApply) return
+                mainHandler.removeCallbacks(storyboardAutoApplyRunnable)
+                mainHandler.postDelayed(storyboardAutoApplyRunnable, 2_000L)
+            }
+        }
+        listOf(R.id.storyboardStartTime, R.id.storyboardEndTime, R.id.storyboardIntervalTime).forEach { id ->
+            findViewById<EditText>(id).addTextChangedListener(watcher)
+        }
+    }
+
     private fun storyboardColumns(): Int {
         val railWidth = findViewById<View>(R.id.standaloneActionsRail).width.takeIf { it > 0 } ?: dp(85)
         val available = storyboardRows.width.takeIf { it > 0 } ?: (resources.displayMetrics.widthPixels - railWidth - dp(12)).coerceAtLeast(dp(150))
@@ -3308,39 +3336,27 @@ class MainActivity : Activity() {
         freeCropMode = false
         cropOverlay.visibility = View.GONE
         if (::timeModeButton.isInitialized) timeModeButton.text = "نمایش نوار زمان"
-        scroll.isFillViewport = enabled
+        scroll.isFillViewport = true
         val storyboardFrame = findViewById<View>(R.id.storyboardTableFrame)
         val storyboardMoveArea = findViewById<FrameLayout>(R.id.storyboardTableMoveArea)
-        if (enabled) {
-            scroll.post {
-                section.post {
-                    if (allViewMode) {
-                        // Keep the tool rows fixed; only the table gets the remaining viewport.
-                        val fixedHeaderHeight = storyboardMoveArea.top.coerceAtLeast(0)
-                        val availableAreaHeight = (scroll.height - fixedHeaderHeight - dp(2)).coerceAtLeast(dp(200))
-                        storyboardMoveArea.layoutParams = storyboardMoveArea.layoutParams.apply { height = availableAreaHeight }
-                        storyboardFrame.layoutParams = (storyboardFrame.layoutParams as FrameLayout.LayoutParams).apply {
-                            height = availableAreaHeight.coerceAtLeast(dp(200))
-                            width = storyboardMoveArea.width
-                            gravity = Gravity.CENTER
-                        }
-                        storyboardMoveArea.requestLayout()
-                        storyboardFrame.requestLayout()
-                        scroll.scrollTo(0, 0)
-                    }
+        // In both modes the storyboard table consumes the remaining viewport exactly;
+        // this prevents empty background bands from appearing after toggling All View.
+        scroll.post {
+            section.post {
+                val fixedHeaderHeight = storyboardMoveArea.top.coerceAtLeast(0)
+                val availableAreaHeight = (scroll.height - fixedHeaderHeight - dp(4)).coerceAtLeast(dp(200))
+                storyboardMoveArea.layoutParams = storyboardMoveArea.layoutParams.apply { height = availableAreaHeight }
+                storyboardFrame.layoutParams = (storyboardFrame.layoutParams as FrameLayout.LayoutParams).apply {
+                    height = availableAreaHeight
+                    width = storyboardMoveArea.width.takeIf { it > 0 } ?: scroll.width
+                    gravity = Gravity.TOP
                 }
+                storyboardMoveArea.requestLayout()
+                storyboardFrame.requestLayout()
+                scroll.scrollTo(0, 0)
             }
-        } else {
-            storyboardMoveArea.layoutParams = storyboardMoveArea.layoutParams.apply { height = dp(460) }
-            storyboardFrame.layoutParams = (storyboardFrame.layoutParams as FrameLayout.LayoutParams).apply {
-                width = storyboardMoveArea.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
-                height = dp(460)
-                gravity = Gravity.CENTER
-            }
-            storyboardMoveArea.requestLayout()
-            storyboardFrame.requestLayout()
-            scroll.post { this@MainActivity.updateToolbarRailHeight() }
         }
+        if (!enabled) scroll.post { this@MainActivity.updateToolbarRailHeight() }
         findViewById<Button>(R.id.allViewButton).text = if (enabled) "بازگشت • All View" else "All View • فقط اسلایدها"
         // The storyboard content is already built; toggling All View changes only the viewport.
         // Avoid restarting frame extraction on every enter/exit.
@@ -3534,8 +3550,11 @@ class MainActivity : Activity() {
                     if (storyboardEndMs <= storyboardStartMs || storyboardEndMs > duration) {
                         storyboardStartMs = 0L
                         storyboardEndMs = duration
-                        findViewById<android.widget.EditText>(R.id.storyboardStartTime).setText("00:00")
-                        findViewById<android.widget.EditText>(R.id.storyboardEndTime).setText(formatTime(duration))
+                        suppressStoryboardAutoApply = true
+                        try {
+                            findViewById<android.widget.EditText>(R.id.storyboardStartTime).setText("00:00")
+                            findViewById<android.widget.EditText>(R.id.storyboardEndTime).setText(formatTime(duration))
+                        } finally { suppressStoryboardAutoApply = false }
                     }
                     // Initialize the timeline with the selected video's duration.
                     // Without this, TimelineView remains in its empty state and cannot draw thumbnails.
@@ -3639,9 +3658,12 @@ class MainActivity : Activity() {
         cleanupTemporaryStoryboardCells()
         selectedFrames.clear()
         storyboardRangeAnchorIndex = null
-        findViewById<EditText>(R.id.storyboardIntervalTime).setText("")
-        findViewById<android.widget.EditText>(R.id.storyboardStartTime).setText("00:00")
-        findViewById<android.widget.EditText>(R.id.storyboardEndTime).setText(formatTime(videoDurationMs))
+        suppressStoryboardAutoApply = true
+        try {
+            findViewById<EditText>(R.id.storyboardIntervalTime).setText("")
+            findViewById<android.widget.EditText>(R.id.storyboardStartTime).setText("00:00")
+            findViewById<android.widget.EditText>(R.id.storyboardEndTime).setText(formatTime(videoDurationMs))
+        } finally { suppressStoryboardAutoApply = false }
         frameViews.forEach { (index, view) -> view.visibility = if (index in deletedStoryboardFrames) View.GONE else View.VISIBLE }
         updateModeButtons()
         val uri = selectedUri
@@ -3678,13 +3700,14 @@ class MainActivity : Activity() {
             error = null
         }
         statusText.text = if (isStart) {
-            "زمان شروع استوری‌بورد روی ${formatTime(at)} ثبت شد؛ برای نمایش بازه، «اعمال زمان» را بزنید"
+            "زمان شروع استوری‌بورد روی ${formatTime(at)} ثبت شد؛ پس از دو ثانیه، استوری‌بورد خودکار به‌روزرسانی می‌شود"
         } else {
-            "زمان پایان استوری‌بورد روی ${formatTime(at)} ثبت شد؛ برای نمایش بازه، «اعمال زمان» را بزنید"
+            "زمان پایان استوری‌بورد روی ${formatTime(at)} ثبت شد؛ پس از دو ثانیه، استوری‌بورد خودکار به‌روزرسانی می‌شود"
         }
     }
 
     private fun applyStoryboardTimeRange() {
+        mainHandler.removeCallbacks(storyboardAutoApplyRunnable)
         val uri = selectedUri
         if (uri == null || videoDurationMs <= 0L) {
             Toast.makeText(this, "ابتدا ویدیو را انتخاب کنید", Toast.LENGTH_SHORT).show(); return
@@ -3721,7 +3744,9 @@ class MainActivity : Activity() {
             } else interval
             storyboardIntervalMs = effectiveInterval
             if (effectiveInterval != interval) {
-                intervalField.setText(formatTime(effectiveInterval))
+                suppressStoryboardAutoApply = true
+                try { intervalField.setText(formatTime(effectiveInterval)) }
+                finally { suppressStoryboardAutoApply = false }
                 Toast.makeText(this, "برای نمایش کامل ویدیو، فاصله به ${formatTime(effectiveInterval)} تنظیم شد تا تعداد اسلایدها از $MAX_STORYBOARD_FRAME_COUNT بیشتر نشود", Toast.LENGTH_LONG).show()
             }
         }
@@ -3743,9 +3768,12 @@ class MainActivity : Activity() {
         selectedFrames.clear()
         storyboardRangeAnchorIndex = null
         cleanupTemporaryStoryboardCells()
-        findViewById<EditText>(R.id.storyboardIntervalTime).setText("")
-        findViewById<EditText>(R.id.storyboardStartTime).setText("00:00")
-        findViewById<EditText>(R.id.storyboardEndTime).setText(formatTime(videoDurationMs))
+        suppressStoryboardAutoApply = true
+        try {
+            findViewById<EditText>(R.id.storyboardIntervalTime).setText("")
+            findViewById<EditText>(R.id.storyboardStartTime).setText("00:00")
+            findViewById<EditText>(R.id.storyboardEndTime).setText(formatTime(videoDurationMs))
+        } finally { suppressStoryboardAutoApply = false }
         reloadStoryboardForRange(uri)
         updateSelectionText()
     }
@@ -5114,6 +5142,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         storyboardGeneration++
         mainHandler.removeCallbacks(playbackSyncRunnable)
+        mainHandler.removeCallbacks(storyboardAutoApplyRunnable)
         releaseOverlayPreviewPlayer()
         worker.shutdownNow()
         frameBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
