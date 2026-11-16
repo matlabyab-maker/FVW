@@ -216,7 +216,7 @@ class MainActivity : Activity() {
 
     /**
      * Project-wide control rule: every button uses the 52dp height of "لغو انتخاب".
-     * The two intentionally tall toolbar actions keep their original 124dp height; all other buttons use 52dp.
+     * Toolbar actions follow the same height so their labels remain inside the horizontal rail.
      * Labels are wrapped and measured to use the largest size that fits without clipping.
      * A root layout listener also catches controls added later inside editor windows.
      */
@@ -1769,7 +1769,7 @@ class MainActivity : Activity() {
                     item.setPadding(dp(2), dp(2), dp(2), dp(2))
                     item.includeFontPadding = false
                 }
-                group.addView(item, LinearLayout.LayoutParams(dp(94), if (itemId == R.id.openButton || itemId == R.id.outputChangesButton) dp(124) else dp(52)))
+                group.addView(item, LinearLayout.LayoutParams(dp(94), dp(52)))
             }
             actionContainer.addView(group)
             if (groupIndex < 4) {
@@ -1814,7 +1814,7 @@ class MainActivity : Activity() {
                         is Button -> {
                             val bp = lp as? LinearLayout.LayoutParams ?: continue
                             bp.width = if (horizontal) dp(94) else ViewGroup.LayoutParams.MATCH_PARENT
-                            bp.height = if (child.id == R.id.openButton || child.id == R.id.outputChangesButton) dp(124) else dp(52)
+                            bp.height = dp(52)
                             bp.setMargins(if (horizontal) dp(1) else 0, 0, if (horizontal) dp(1) else 0, 0)
                             child.layoutParams = bp
                             child.textSize = if (horizontal) 10f else 9f
@@ -3376,13 +3376,17 @@ class MainActivity : Activity() {
         val scroll = findViewById<ScrollView>(R.id.mainScrollView)
         val content = scroll.getChildAt(0) as? ViewGroup ?: return
         val section = findViewById<View>(R.id.storyboardSection)
+        val playerRow = findViewById<View>(R.id.playerActionRow)
+
+        // All View contains exactly: compact player, storyboard command row and table.
+        // Every other editor panel/control is hidden while this mode is active.
         for (i in 0 until content.childCount) {
             val child = content.getChildAt(i)
-            child.visibility = if (!enabled || child === section) View.VISIBLE else View.GONE
+            child.visibility = if (!enabled || child === section || child === playerRow) View.VISIBLE else View.GONE
         }
-        findViewById<View>(R.id.playerContainer).visibility = View.VISIBLE
         findViewById<View>(R.id.editorTitle).visibility = if (enabled) View.GONE else View.VISIBLE
         findViewById<View>(R.id.statusText).visibility = if (enabled) View.GONE else View.VISIBLE
+
         val colorControls = findViewById<View>(R.id.fixedColorControls)
         if (enabled) {
             allViewPreviousColorVisibility = colorControls.visibility
@@ -3390,8 +3394,32 @@ class MainActivity : Activity() {
         } else {
             colorControls.visibility = allViewPreviousColorVisibility
         }
-        // All View is a storyboard-only workspace. When returning to the normal
-        // editor, never restore collapsible tool windows as expanded panels.
+
+        val playerActions = playerRow as? ViewGroup
+        val sideActions = playerActions?.getChildAt(0)
+        val playerContainer = findViewById<View>(R.id.playerContainer)
+        if (enabled) {
+            // Keep both player action rails beside the preview. The preview itself
+            // is half-height, centered vertically in the full-height action row.
+            playerRow.layoutParams = playerRow.layoutParams.apply { height = dp(220) }
+            sideActions?.visibility = View.VISIBLE
+            playerContainer.layoutParams = (playerContainer.layoutParams as LinearLayout.LayoutParams).apply {
+                width = 0
+                height = dp(110)
+                weight = 1f
+            }
+        } else {
+            playerRow.layoutParams = playerRow.layoutParams.apply { height = dp(220) }
+            sideActions?.visibility = View.VISIBLE
+            playerContainer.layoutParams = (playerContainer.layoutParams as LinearLayout.LayoutParams).apply {
+                width = 0
+                height = ViewGroup.LayoutParams.MATCH_PARENT
+                weight = 1f
+            }
+        }
+
+        // Keep only the storyboard's command row; hide status/range/cover extras in All View.
+        findViewById<View>(R.id.selectionText).visibility = if (enabled) View.GONE else View.VISIBLE
         intArrayOf(
             R.id.timelinePanel,
             R.id.trackPanel,
@@ -3404,15 +3432,14 @@ class MainActivity : Activity() {
         freeCropMode = false
         cropOverlay.visibility = View.GONE
         if (::timeModeButton.isInitialized) timeModeButton.text = "نمایش نوار زمان"
+
         scroll.isFillViewport = true
         val storyboardFrame = findViewById<View>(R.id.storyboardTableFrame)
         val storyboardMoveArea = findViewById<FrameLayout>(R.id.storyboardTableMoveArea)
-        // In both modes the storyboard table consumes the remaining viewport exactly;
-        // this prevents empty background bands from appearing after toggling All View.
         scroll.post {
             section.post {
                 val fixedHeaderHeight = storyboardMoveArea.top.coerceAtLeast(0)
-                val availableAreaHeight = (scroll.height - fixedHeaderHeight - dp(4)).coerceAtLeast(dp(200))
+                val availableAreaHeight = (scroll.height - fixedHeaderHeight - dp(4)).coerceAtLeast(dp(120))
                 storyboardMoveArea.layoutParams = storyboardMoveArea.layoutParams.apply { height = availableAreaHeight }
                 storyboardFrame.layoutParams = (storyboardFrame.layoutParams as FrameLayout.LayoutParams).apply {
                     height = availableAreaHeight
@@ -3426,8 +3453,6 @@ class MainActivity : Activity() {
         }
         if (!enabled) scroll.post { this@MainActivity.updateToolbarRailHeight() }
         findViewById<Button>(R.id.allViewButton).text = if (enabled) "بازگشت • All View" else "All View • فقط اسلایدها"
-        // The storyboard content is already built; toggling All View changes only the viewport.
-        // Avoid restarting frame extraction on every enter/exit.
         scroll.post { scroll.scrollTo(0, 0) }
     }
 

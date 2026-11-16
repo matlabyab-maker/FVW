@@ -4,14 +4,14 @@ Repository package: `FVW`
 Gradle root project: `FVW`  
 Application label: `EVeditor`  
 Application ID: `com.evc.app`  
-Version: `0.2.174` (`373`)  
+Version: `0.2.175` (`375`)  
 Target ABI: `armeabi-v7a` (ARM 32-bit)
 
 > GitHub Actions workflow: `.github/workflows/android.yml` — runs on pushes to all branches and supports manual dispatch. See `FVW_Commit_Guide_FA.txt` for MGit/GitHub setup and troubleshooting.
 
 ---
 
-# FVW – 0.2.174
+# FVW – 0.2.175
 
 ## تغییرات رابط استوری‌بورد
 - اعمال خودکار بازه و فاصلهٔ فریم‌ها، دو ثانیه پس از پایان ورود متن زمان.
