@@ -1,0 +1,38 @@
+راهنمای ساخت مخزن تازه FVW در GitHub و MGit
+
+این بسته برای ایجاد Repository تازه با نام دقیق FVW آماده شده است. پوشه .git و تاریخچه/Remote قبلی عمداً حذف شده‌اند؛ بنابراین MGit باید مخزن محلی جدید بسازد.
+
+۱) استخراج پروژه
+- فایل FVW.zip را استخراج کنید.
+- پوشه FVW را به‌عنوان ریشه مخزن محلی در MGit انتخاب کنید.
+- فایل‌های settings.gradle.kts و build.gradle.kts و پوشه‌های app و .github باید مستقیماً داخل FVW باشند.
+- مسیر Workflow باید دقیقاً .github/workflows/android.yml باشد؛ پوشهٔ FVW تودرتو نسازید.
+
+۲) ساخت Repository در GitHub
+- در GitHub یک Repository خالی با نام دقیق FVW بسازید.
+- هنگام ساخت، README، .gitignore یا License اضافه نکنید؛ این بسته فایل‌های لازم را دارد.
+- آدرس HTTPS مخزن تازه را کپی کنید.
+
+۳) Commit و Push در MGit
+- پوشه FVW را در MGit باز کنید و همه فایل‌ها، از جمله فایل مخفی .github، را Stage کنید.
+- اولین Commit را با پیام Initial FVW project ثبت کنید.
+- Remote با نام origin و آدرس Repository تازه را اضافه کنید و سپس به شاخه مقصد Push کنید.
+- Commit محلی به‌تنهایی در GitHub نمایش داده نمی‌شود؛ Push باید موفق باشد.
+- برای احراز هویت از روش فعلی GitHub یا Personal Access Token استفاده کنید، نه رمز عادی حساب.
+
+۴) اجرای GitHub Actions
+- فایل .github/workflows/android.yml در ریشه پروژه قرار دارد.
+- محرک‌های push و pull_request برای همه شاخه‌ها با branches: ["**"] حفظ شده‌اند و workflow_dispatch نیز فعال است.
+- پس از Push، زبانه Actions و Workflow با نام FVW Android Build را بررسی کنید.
+- اگر Run شروع نشد، مسیر Workflow، فعال بودن Actions و موفقیت Push را بررسی کنید. اگر Run قرمز شد، نخستین خطای واقعی همان اجرا را بررسی کنید.
+
+۵) مشخصات پایه پروژه
+- Repository و Gradle root: FVW
+- نام نمایشی برنامه: EVeditor (حفظ شده)
+- applicationId و namespace: com.evc.app (حفظ شده تا هویت نصب بی‌دلیل تغییر نکند)
+- نسخه: 0.2.170، versionCode: 370
+- ABI: armeabi-v7a (ARM 32-bit)
+- JDK: 17؛ Gradle: 8.9؛ compileSdk: 35
+- Artifact: FVW-0.2.170-ARM32-Dynamic-Storyboard-debug-apk
+
+نکته: این بسته Gradle Wrapper ندارد؛ Workflow از Gradle 8.9 نصب‌شده در GitHub Actions استفاده می‌کند. ساخت APK در این محیط اجرا نشده است؛ موفقیت کامپایل باید در Actions تأیید و APK روی دستگاه نصب و آزمایش شود.
