@@ -132,6 +132,7 @@ class MainActivity : Activity() {
     private var selectedCoverFrameIndex: Int? = null
     @Volatile private var storyboardPriorityIndex: Int = 0
     private var allViewMode = false
+    private var storyboardNavigationMode = 0
     private var userStoryboardColumns: Int? = null
     // Exact timestamps for storyboard cells populated by image-based scene search.
     private val imageSearchFrameTimes = mutableMapOf<Int, Long>()
@@ -215,7 +216,7 @@ class MainActivity : Activity() {
 
     /**
      * Project-wide control rule: every button uses the 52dp height of "لغو انتخاب".
-     * The two intentionally tall toolbar actions keep their original 124dp height.
+     * The two intentionally tall toolbar actions keep their original 124dp height; all other buttons use 52dp.
      * Labels are wrapped and measured to use the largest size that fits without clipping.
      * A root layout listener also catches controls added later inside editor windows.
      */
@@ -479,16 +480,23 @@ class MainActivity : Activity() {
             }
             false
         }
-        findViewById<Button>(R.id.storyboardTopButton).setOnClickListener { storyboardTableScroll.smoothScrollTo(0, 0) }
-        findViewById<Button>(R.id.storyboardMiddleButton).setOnClickListener {
-            storyboardTableScroll.post {
-                val maxScroll = (storyboardRows.height - storyboardTableScroll.height).coerceAtLeast(0)
-                storyboardTableScroll.smoothScrollTo(0, maxScroll / 2)
+        findViewById<Button>(R.id.storyboardTopButton).setOnClickListener { button ->
+            val navigationButton = button as Button
+            when (storyboardNavigationMode) {
+                0 -> storyboardTableScroll.smoothScrollTo(0, 0)
+                1 -> storyboardTableScroll.post {
+                    val maxScroll = (storyboardRows.height - storyboardTableScroll.height).coerceAtLeast(0)
+                    storyboardTableScroll.smoothScrollTo(0, maxScroll / 2)
+                }
+                else -> storyboardTableScroll.post {
+                    storyboardTableScroll.smoothScrollTo(0, (storyboardRows.height - storyboardTableScroll.height).coerceAtLeast(0))
+                }
             }
-        }
-        findViewById<Button>(R.id.storyboardBottomButton).setOnClickListener {
-            storyboardTableScroll.post {
-                storyboardTableScroll.smoothScrollTo(0, (storyboardRows.height - storyboardTableScroll.height).coerceAtLeast(0))
+            storyboardNavigationMode = (storyboardNavigationMode + 1) % 3
+            navigationButton.text = when (storyboardNavigationMode) {
+                0 -> "Up"
+                1 -> "Between"
+                else -> "Down"
             }
         }
         storyboardScaleDetector = android.view.ScaleGestureDetector(this, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -508,7 +516,31 @@ class MainActivity : Activity() {
             }
         })
         val columnSpinner = findViewById<android.widget.Spinner>(R.id.storyboardColumnCountSpinner)
-        columnSpinner.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, (2..15).map { "$it ستون" })
+        val columnOptions = (2..15).map { it.toString() }
+        columnSpinner.adapter = object : android.widget.ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, columnOptions) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val label = (convertView as? TextView) ?: TextView(this@MainActivity)
+                label.text = getItem(position)
+                label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 24f)
+                label.setTypeface(null, Typeface.BOLD)
+                label.gravity = Gravity.CENTER
+                label.setTextColor(Color.WHITE)
+                return label
+            }
+            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val label = (convertView as? TextView) ?: TextView(this@MainActivity)
+                label.text = "${getItem(position)} ستون"
+                label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 18f)
+                label.setTypeface(null, Typeface.BOLD)
+                label.gravity = Gravity.CENTER
+                label.setTextColor(Color.WHITE)
+                label.setPadding(dp(12), dp(10), dp(12), dp(10))
+                label.setBackgroundColor(Color.rgb(16, 33, 62))
+                return label
+            }
+        }.also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        columnSpinner.scaleX = 1.15f
+        columnSpinner.scaleY = 1.15f
         columnSpinner.setSelection(3) // default 5 columns
         columnSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
@@ -1687,31 +1719,57 @@ class MainActivity : Activity() {
         val horizontalKey = "toolbar_horizontal_mode"
         val rightKey = "toolbar_on_right_edge"
 
-        // Reorganize all existing toolbar buttons into exactly five groups without replacing
-        // the buttons themselves, so their original click listeners and IDs are preserved.
-        val toolbarButtons = mutableListOf<Button>()
-        fun collectToolbarButtons(group: ViewGroup) {
+        // Five stable semantic groups. The first two actions never change order or group.
+        // Existing View instances are moved, so their original listeners and IDs survive.
+        val toolbarItems = mutableListOf<View>()
+        fun collectToolbarItems(group: ViewGroup) {
             for (i in 0 until group.childCount) {
                 val child = group.getChildAt(i)
-                if (child is Button) toolbarButtons.add(child)
-                else if (child is ViewGroup) collectToolbarButtons(child)
+                if (child is Button || child is CheckBox) toolbarItems.add(child)
+                else if (child is ViewGroup) collectToolbarItems(child)
             }
         }
-        collectToolbarButtons(actionContainer)
+        collectToolbarItems(actionContainer)
+        val itemById = toolbarItems.associateBy { it.id }
         actionContainer.removeAllViews()
-        val perGroup = ((toolbarButtons.size + 4) / 5).coerceAtLeast(1)
-        for (groupIndex in 0 until 5) {
+        val groups = listOf(
+            listOf(R.id.openButton, R.id.outputChangesButton, R.id.manualOutputNameCheck),
+            listOf(R.id.mergeButton, R.id.globalDeleteButton, R.id.joinAfterButton, R.id.outputFormatButton),
+            listOf(R.id.trackPanelButton, R.id.overlayVideoPanelButton),
+            listOf(R.id.imageSceneSearchButton, R.id.textPlacementButton),
+            listOf(R.id.colorPanelButton, R.id.vectorButton, R.id.cropButton, R.id.advancedEditButton)
+        )
+        val groupColors = mapOf(
+            R.id.openButton to Color.rgb(144, 202, 249),
+            R.id.outputChangesButton to Color.rgb(100, 181, 246),
+            R.id.mergeButton to Color.rgb(255, 224, 130),
+            R.id.globalDeleteButton to Color.rgb(198, 40, 40),
+            R.id.joinAfterButton to Color.rgb(255, 202, 90),
+            R.id.outputFormatButton to Color.rgb(255, 243, 205),
+            R.id.trackPanelButton to Color.rgb(128, 203, 196),
+            R.id.overlayVideoPanelButton to Color.rgb(77, 182, 172),
+            R.id.imageSceneSearchButton to Color.rgb(225, 190, 231),
+            R.id.textPlacementButton to Color.rgb(206, 147, 216),
+            R.id.colorPanelButton to Color.rgb(165, 214, 167),
+            R.id.vectorButton to Color.rgb(102, 187, 106),
+            R.id.cropButton to Color.rgb(77, 182, 172),
+            R.id.advancedEditButton to Color.rgb(129, 199, 132)
+        )
+        for (groupIndex in groups.indices) {
             val group = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
             }
-            val start = groupIndex * perGroup
-            val end = minOf(toolbarButtons.size, start + perGroup)
-            if (start < end) for (buttonIndex in start until end) {
-                val button = toolbarButtons[buttonIndex]
-                (button.parent as? ViewGroup)?.removeView(button)
-                group.addView(button, LinearLayout.LayoutParams(dp(94), dp(54)))
+            for (itemId in groups[groupIndex]) {
+                val item = itemById[itemId] ?: continue
+                (item.parent as? ViewGroup)?.removeView(item)
+                if (item is Button) {
+                    groupColors[itemId]?.let { item.backgroundTintList = android.content.res.ColorStateList.valueOf(it) }
+                    item.setPadding(dp(2), dp(2), dp(2), dp(2))
+                    item.includeFontPadding = false
+                }
+                group.addView(item, LinearLayout.LayoutParams(dp(94), if (itemId == R.id.openButton || itemId == R.id.outputChangesButton) dp(124) else dp(52)))
             }
             actionContainer.addView(group)
             if (groupIndex < 4) {
@@ -1724,6 +1782,7 @@ class MainActivity : Activity() {
                 }, LinearLayout.LayoutParams(dp(12), ViewGroup.LayoutParams.MATCH_PARENT))
             }
         }
+        val toolbarButtons = toolbarItems.filter { it is Button && it !is CheckBox }.map { it as Button }
 
         fun configureItems(horizontal: Boolean) {
             fun visit(group: ViewGroup, isRoot: Boolean = false) {
@@ -1743,10 +1802,19 @@ class MainActivity : Activity() {
                     if (child is ViewGroup) visit(child, false)
                     val lp = child.layoutParams
                     when (child) {
+                        is CheckBox -> {
+                            val cp = lp as? LinearLayout.LayoutParams ?: continue
+                            cp.width = if (horizontal) dp(94) else ViewGroup.LayoutParams.MATCH_PARENT
+                            cp.height = dp(52)
+                            cp.setMargins(if (horizontal) dp(1) else 0, 0, if (horizontal) dp(1) else 0, 0)
+                            child.layoutParams = cp
+                            child.textSize = if (horizontal) 10f else 9f
+                            child.gravity = Gravity.CENTER
+                        }
                         is Button -> {
                             val bp = lp as? LinearLayout.LayoutParams ?: continue
                             bp.width = if (horizontal) dp(94) else ViewGroup.LayoutParams.MATCH_PARENT
-                            bp.height = if (horizontal) dp(54) else dp(62)
+                            bp.height = if (child.id == R.id.openButton || child.id == R.id.outputChangesButton) dp(124) else dp(52)
                             bp.setMargins(if (horizontal) dp(1) else 0, 0, if (horizontal) dp(1) else 0, 0)
                             child.layoutParams = bp
                             child.textSize = if (horizontal) 10f else 9f
